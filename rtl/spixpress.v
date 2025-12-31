@@ -1,79 +1,71 @@
 ////////////////////////////////////////////////////////////////////////////////
 //
-// Filename: 	spixpress.v
+// 文件名: 	spixpress.v
 // {{{
-// Project:	A Set of Wishbone Controlled SPI Flash Controllers
+// 项目:	一组由 Wishbone 控制的 SPI Flash 控制器
 //
-// Purpose:	This module is intended to be a low logic flash controller.
-// 		It uses the 8'h03 read command from the flash, and so it
-// 	cannot be used with a clock speed any greater than 50MHz.
+// 目的:	该模块旨在作为一个低逻辑资源消耗的 Flash 控制器。
+// 		它使用来自 Flash 的 8'h03 读取命令，因此不能用于
+// 		时钟频率高于 50MHz 的场合。
 //
-//	Although this controller has no erase or program capability, it
-//	includes a control port.  When using the control port, you should be
-//	able to send arbitrary commands to the flash--but not read from the
-//	flash during that time.
+//	虽然该控制器没有直接的擦除或编程功能，但它包含一个控制端口。
+//	通过使用控制端口，你应该能够向 Flash 发送任意命令——但在该时间内
+//	不能从 Flash 进行正常的存储器读取。
 //
-// Configuration:
+// 配置项:
 //	{{{
-//	In the interests of *LOW* logic, the controller has options for
-//	OPT_CFG and OPT_PIPE.  If both are set to zero, the controller will be
-//	in its lowest logic configuration.  That said, if you set OPT_CFG to
-//	zero, you must also set i_cfg_stb to zero as well--lest you expect an
-//	acknowledgement from a request made when i_cfg_stb is high.
+//	为了追求 *极低* 的逻辑资源消耗，控制器提供了 OPT_CFG 和 OPT_PIPE 选项。
+//	如果两者都设置为 0，控制器将处于最低逻辑配置。也就是说，如果你将 OPT_CFG
+//	设置为 0，你还必须将 i_cfg_stb 保持为 0——除非你期望在 i_cfg_stb 为高时
+//	发出的请求会得到应答（实则不会）。
 //	}}}
 //
-// Memory map:
+// 内存映射:
 // {{{
-// 	Control Port
-// 	[31:9]	Unused bits, ignored on write, read as zero
+// 	控制端口 (Control Port)
+// 	[31:9]	未使用，写入时忽略，读取为零
 // 	[8]	CS_n
-// 			Can be activated via a write to the control port.
-// 			This will render the memory addresses unreadable.
-// 			Write a '1' to this value to return the memory to
-// 			normal operation.
-// 	[7:0]	BYTE-DATA
-// 			Following a write to the control port where bit [8]
-// 			is low, the controller will send bits [7:0] out the
-// 			SPI port, top bit first.  Once accomplished, the
-// 			control port may be read to see what values were
-// 			read from the SPI port.  Those values will be stored
-// 			in these same bits [7:0].
+// 			可以通过写入控制端口来激活。
+// 			这将导致内存地址暂时不可读取。
+// 			向此位写入 '1' 可使内存返回正常操作模式。
+// 	[7:0]	字节数据 (BYTE-DATA)
+// 			当控制端口写入且位 [8] 为低时，控制器将位 [7:0] 
+// 			通过 SPI 端口发送出去（最高位优先）。
+// 			完成后，可以读取控制端口以查看从 SPI 端口读取到的值。
+// 			这些值也将存储在相同的位 [7:0] 中。
 //
-//	Memory
-//		Returns the data from the address read
+//	内存访问 (Memory)
+//		返回所读取地址的数据。
 //
-//		Requires that the CS_N setting within the control port be
-//		deactivated, otherwise requests to read from memory
-//		will simply return the control port register immediately
-//		without doing anything.
+//		要求控制端口中的 CS_N 设定处于非激活状态，
+//		否则读取内存的请求将直接立即返回控制端口寄存器的内容，
+//		而不执行任何实际的 Flash 读取操作。
 // }}}
 //
-// Creator:	Dan Gisselquist, Ph.D.
+// 创建者:	Dan Gisselquist, Ph.D.
 //		Gisselquist Technology, LLC
 //
 ////////////////////////////////////////////////////////////////////////////////
 // }}}
-// Copyright (C) 2018-2021, Gisselquist Technology, LLC
+// 版权所有 (C) 2018-2021, Gisselquist Technology, LLC
 // {{{
-// This file is part of the set of Wishbone controlled SPI flash controllers
-// project
+// 该文件是 Wishbone 控制的 SPI Flash 控制器集项目的一部分
 //
-// The Wishbone SPI flash controller project is free software (firmware):
-// you can redistribute it and/or modify it under the terms of the GNU Lesser
-// General Public License as published by the Free Software Foundation, either
-// version 3 of the License, or (at your option) any later version.
+// Wishbone SPI Flash 控制器项目是自由软件(固件):
+// 您可以重新分发和/或根据 GNU 较宽松公共许可证的条款
+// 进行修改，由自由软件基金会发布，许可证版本为 3，
+// 或(根据您的选择)任何更高版本。
 //
-// The Wishbone SPI flash controller project is distributed in the hope
-// that it will be useful, but WITHOUT ANY WARRANTY; without even the implied
-// warranty of MERCHANTIBILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU Lesser General Public License for more details.
+// Wishbone SPI Flash 控制器项目发布是希望它会有用，
+// 但没有任何保证;甚至没有适销性或特定用途适用性的
+// 隐含保证。有关详细信息，请参见 GNU 较宽松公共许可证。
 //
-// You should have received a copy of the GNU Lesser General Public License
-// along with this program.  (It's in the $(ROOT)/doc directory.  Run make
-// with no target there if the PDF file isn't present.)  If not, see
-// <http://www.gnu.org/licenses/> for a copy.
+// 您应该已收到 GNU 较宽松公共许可证的副本
+// 与本程序一起。(它在 $(ROOT)/doc 目录中。如果 PDF
+// 文件不存在，请在该目录中运行不带目标的 make。) 如果没有，请参见
+// <http://www.gnu.org/licenses/> 获取副本。
 // }}}
-// License:	LGPL, v3, as defined and found on www.gnu.org,
+// 许可证:	LGPL, v3, 在 www.gnu.org 上定义和找到,
 // {{{
 //		http://www.gnu.org/licenses/lgpl.html
 //
@@ -86,24 +78,21 @@ module	spixpress #(
 		// {{{
 		// OPT_PIPE
 		// {{{
-		// OPT_PIPE allows successive, sequential, transactions to
-		// incrementing addresses without requiring a new address to
-		// be sent.
+		// OPT_PIPE 允许连续的、顺序的事务访问递增地址，
+		// 而无需发送新地址。
 		//
-		// Random access performance:	65+64(N-1)
-		// Performance when piped:	65+32(N-1)
+		// 随机访问性能:	65+64(N-1)
+		// 流水线性能:	65+32(N-1)
 		//
 		parameter [0:0]	OPT_PIPE = 1'b1,
 		// }}}
 		// OPT_CFG
 		// {{{
-		// OPT_CFG creates a configuration register that can be accessed
-		// through i_cfg_stb when the core isn't busy.  Using this
-		// configuration register, it is possible to send arbitrary
-		// commands to the flash, and hence to erase or program the
-		// flash.  Since the access is arbitrary, other flash features
-		// are supported as well such as programming or reading the
-		// one-time-programmable memory or more.
+		// OPT_CFG 创建一个配置寄存器，可以在核心不忙时通过
+		// i_cfg_stb 访问。使用此配置寄存器，可以向 Flash
+		// 发送任意命令，从而可以擦除或编程 Flash。
+		// 由于访问是任意的，其他 Flash 功能也得到支持，
+		// 例如编程或读取一次性可编程存储器等。
 		parameter [0:0]	OPT_CFG  = 1'b1
 		// }}}
 		// }}}
@@ -122,7 +111,7 @@ module	spixpress #(
 		// }}}
 	);
 
-	// Signal declarations
+	// 信号声明
 	// {{{
 	reg		cfg_user_mode;
 	reg	[32:0]	wdata_pipe;
@@ -143,11 +132,10 @@ module	spixpress #(
 					&&(i_wb_we)&&(!i_wb_data[8]);
 
 
-	// ack_delay (State control)
+	// ack_delay (状态控制)
 	// {{{
-	// The state control is nominally the number of clocks to wait until
-	// the current operation finishes.  Once ack_delay transitions to 0,
-	// the operation is finished and o_wb_ack should be high.
+	// 状态控制名义上是等待当前操作完成所需的时钟数。
+	// 一旦 ack_delay 过渡到 0，操作完成，o_wb_ack 应该为高电平。
 	initial	ack_delay = 0;
 	always @(posedge i_clk)
 	if ((i_reset)||(!i_wb_cyc))
@@ -164,58 +152,55 @@ module	spixpress #(
 	// {{{
 	// MOSI
 	// {{{
-	// wdata_pipe is a long shift register, containing values that need
-	// to be sent to the SPI port for our current transaction.  The
-	// basic transaction requires sending a 8'h03 (read) command, followed
-	// by a 24-bit address.
+	// wdata_pipe 是一个长移位寄存器，包含当前事务需要发送到
+	// SPI 端口的值。基本事务需要发送 8'h03 (读取) 命令，
+	// 后跟 24 位地址。
 	//
-	// For purposes of logic minimization, setting wdata_pipe has been
-	// broken up into two sections, but it basically follows a couple
-	// of models:
+	// 为了逻辑最小化，wdata_pipe 的设置分为两个部分，
+	// 但基本上遵循几种模型：
 	//
-	// 1. Upon any flash read request, request a read from the 24-bit
-	//	address formed from i_wb_addr[21:0] and 2'b00--since we are
-	//	only doing aligned transactions.
+	// 1. 在任何 Flash 读取请求时，从 i_wb_addr[21:0] 和 2'b00
+	//	形成的 24 位地址请求读取--因为我们只执行对齐的事务。
 	//
 	//	wdata_pipe <= { 1'b0, 8'h03, i_wb_addr[21:0], 2'b00 };
 	//
-	// 2. Upon any configuration port write, set the data based upon the
-	//	desired 8-bit command contained in i_wb_data
+	// 2. 在任何配置端口写入时，根据 i_wb_data 中包含的
+	//	所需 8 位命令设置数据
 	//
 	//	wdata_pipe <= { 1'b0, i_wb_data[7:0], 24'bz };
 	//
-	// 3. During any operation, shift the pipe up/left one bit per clock,
-	//	backfilling with 1'bz nominally, but 1'b0 in actuality
+	// 3. 在任何操作期间，每个时钟将管道向上/向左移动一位，
+	//	名义上用 1'bz 填充，但实际上用 1'b0
 	//
-	// 4. If the interface is idle, wdata_pipe is a don't care.
+	// 4. 如果接口空闲，wdata_pipe 是无关项。
 	// }}}
 	//
 	initial	wdata_pipe = 0;
 	always @(posedge i_clk)
 	if (!o_wb_stall)
-		// On any read request, this sets the address to be read.
+		// 在任何读取请求时，这设置要读取的地址。
 		//
-		// On a configuration write request, or if the bus is idle,
-		// these bits are don't cares so we can optimize them a bit
+		// 在配置写入请求时，或总线空闲时，
+		// 这些位是无关项，因此我们可以稍微优化它们
 		wdata_pipe[23:0] <= { i_wb_addr[21:0], 2'b00 };
 	else
-		// While in operation, just shift left one bit at a time
+		// 在操作期间，一次只向左移动一位
 		wdata_pipe[23:0] <= { wdata_pipe[22:0], 1'b0 };
 
 	always @(posedge i_clk)
 	if (((!OPT_CFG)||(i_wb_stb))&&(!o_wb_stall)) // (bus_request)
-		// Request to read from the flash
+		// 请求从 Flash 读取
 		wdata_pipe[32:24] <= { 1'b0, 8'h03 };
 	else if ((OPT_CFG)&&(!o_wb_stall)) // (user_request)
-		// Request to send special data to the flash
+		// 请求向 Flash 发送特殊数据
 		wdata_pipe[32:24] <= { 1'b0, i_wb_data[7:0] };
 	else
-		// Otherwise just shift the register left
+		// 否则只是将寄存器向左移动
 		wdata_pipe[32:24] <= { wdata_pipe[31:23] };
 	// }}}
 
-	// The outgoing bit to the flash is simply given by the top bit of
-	// this wdata_pipe shift register.
+	// 发送到 Flash 的输出位简单地由这个 wdata_pipe 移位寄存器的
+	// 最高位给出。
 	always @(*)
 		o_spi_mosi = wdata_pipe[32];
 
@@ -224,31 +209,29 @@ module	spixpress #(
 	initial	o_wb_ack = 0;
 	always @(posedge i_clk)
 	if (i_reset)
-		// Clear any acknowledgment on reset
+		// 在复位时清除任何确认
 		o_wb_ack <= 0;
 	else if (ack_delay == 1)
-		// Acknowledge the end of any operation, whether from the
-		// configuration port or from reading the memory
+		// 确认任何操作的结束，无论是来自配置端口还是来自
+		// 读取内存
 		o_wb_ack <= (i_wb_cyc);
 	else if ((i_wb_stb)&&(!o_wb_stall)&&(!bus_request))
-		// Immediately acknowledge any write to the memory address
-		// space, or any read/write while the configuration port is
-		// active.
+		// 立即确认对内存地址空间的任何写入，或配置端口
+		// 激活时的任何读/写。
 		o_wb_ack <= 1'b1;
 	else if ((i_cfg_stb)&&(!o_wb_stall)&&(!user_request))
-		// Immediately acknowledge any read from the configuration
-		// port.  No action is required.
+		// 立即确认来自配置端口的任何读取。
+		// 不需要任何操作。
 		o_wb_ack <= 1'b1;
 	else
-		// In all other cases, leave the acknowledgment line low.
+		// 在所有其他情况下，将确认线保持低电平。
 		o_wb_ack <= 0;
 	// }}}
 
-	// cfg_user_mode, CFG user mode (i.e. override mode)
+	// cfg_user_mode, CFG 用户模式 (即覆盖模式)
 	// {{{
-	// If we are in the configuration/user mode, the CS line will be held
-	// low artificially.  This allows us to send multiply byte commands
-	// over a series of configuration writes.
+	// 如果我们在配置/用户模式下，CS 线将被人为地保持低电平。
+	// 这允许我们通过一系列配置写入发送多字节命令。
 	//
 	initial	cfg_user_mode = 0;
 	always @(posedge i_clk)
@@ -260,21 +243,21 @@ module	spixpress #(
 
 	// actual_sck
 	// {{{
-	// Actual_sck (SCK, but delayed by one)
+	// Actual_sck (SCK, 但延迟一个时钟)
 	//
-	// This is the SCK signal the hardware sees
+	// 这是硬件看到的 SCK 信号
 	initial	actual_sck = 1'b0;
 	always @(posedge i_clk)
 	if ((i_reset)||(!i_wb_cyc))
 		actual_sck <= 1'b0;
 	else
-		// Our SCK signal is delayed by one clock from our request
-		// to transmit the SCK.  We'll create a delayed copy of it
-		// here so we can tell what the actual one is doing.
+		// 我们的 SCK 信号比我们请求传输 SCK 的时钟延迟一个时钟。
+		// 我们在这里创建一个延迟副本，这样我们就能知道实际的
+		// SCK 在做什么。
 		actual_sck <= o_spi_sck;
 	// }}}
 
-	// o_wb_data, the Outgoing WB-Data
+	// o_wb_data, 输出的 WB-Data
 	// {{{
 	always @(posedge i_clk)
 	begin
@@ -293,32 +276,29 @@ module	spixpress #(
 
 	// CSN / o_spi_cs_n
 	// {{{
-	// This is the negative logic chip select.
+	// 这是负逻辑芯片选择。
 	//
 	initial	o_spi_cs_n = 1'b1;
 	always @(posedge i_clk)
 	if (i_reset)
-		// Idle on reset
+		// 复位时空闲
 		o_spi_cs_n <= 1'b1;
 	else if ((!i_wb_cyc)&&(!cfg_user_mode))
-		// Following any aborted transaction, or any time we
-		// leave the configuration mode, return to idle.
+		// 在任何中止的事务之后，或任何我们离开配置模式时，
+		// 返回空闲状态。
 		o_spi_cs_n <= 1'b1;
 	else if (bus_request)
-		// On any bus read request, select the device to initiate a
-		// transaction.
+		// 在任何总线读取请求时，选择设备以启动事务。
 		o_spi_cs_n <= 1'b0;
 	else if ((OPT_CFG)&&(i_cfg_stb)&&(!o_wb_stall)&&(i_wb_we))
-		// Similarly, on any write to the configuration port, begin
-		// an 8-bit transfer.
+		// 同样，在对配置端口的任何写入时，开始 8 位传输。
 		o_spi_cs_n <= i_wb_data[8];
 	else if (cfg_user_mode)
-		// Even if the transfer is complete, while we are in
-		// configuration mode hold the CS line active (low)
+		// 即使传输完成，在配置模式下也保持 CS 线激活(低电平)
 		o_spi_cs_n <= 1'b0;
 	else if ((ack_delay == 1)&&(!cfg_user_mode))
-		// In all other cases, a transaction should end on the clock
-		// following ack_delay == 1, so end it here.
+		// 在所有其他情况下，事务应在 ack_delay == 1 之后的时钟
+		// 结束，所以在这里结束它。
 		o_spi_cs_n <= 1'b1;
 	// }}}
 
@@ -329,40 +309,37 @@ module	spixpress #(
 	if (i_reset)
 		o_spi_sck <= 1'b0;
 	else if ((bus_request)||(user_request))
-		// Start clocking following any memory read or configuration
-		// port write request
+		// 在任何内存读取或配置端口写入请求后开始时钟
 		o_spi_sck <= 1'b1;
-	else if ((i_wb_cyc)&&(ack_delay > 2)) // Bus abort check
-		// As long as CYC stays high, continue the request
+	else if ((i_wb_cyc)&&(ack_delay > 2)) // 总线中止检查
+		// 只要 CYC 保持高电平，就继续请求
 		o_spi_sck <= 1'b1;
 	else if ((next_request)&&(ack_delay == 2))
-		// On any pipelined read request, keep the clock running
+		// 在任何流水线读取请求时，保持时钟运行
 		o_spi_sck <= 1'b1;
 	else
-		// Otherwise, shut it down
+		// 否则，关闭它
 		o_spi_sck <= 1'b0;
 	// }}}
 
 	// o_wb_stall
 	// {{{
-	// WB-stall
+	// WB-暂停
 	//
-	// The WB interface needs to stall any time we are busy calculating
-	// an answer, as this core can only process one request at a time.
+	// WB 接口需要在我们忙于计算答案时暂停，因为此核心一次
+	// 只能处理一个请求。
 	initial	o_wb_stall = 1'b0;
 	always @(posedge i_clk)
 	if ((i_reset)||(!i_wb_cyc))
-		// Release the stall line on a reset, or bus abort
+		// 在复位或总线中止时释放暂停线
 		o_wb_stall <= 1'b0;
 	else if ((bus_request)||(user_request))
-		// On any request for a flash transaction, immediately start
-		// stalling the bus
+		// 在任何 Flash 事务请求时，立即开始暂停总线
 		o_wb_stall <= 1'b1;
 	else if ((next_request)&&(ack_delay == 2))
-		// This one is tricky.  If there's a request for a subsequent
-		// read transaction, we'll need to lower the stall line in
-		// order to accept it.  This depends upon the bus request
-		// remaining stable for another clock period.
+		// 这个很棘手。如果有后续读取事务的请求，我们需要
+		// 降低暂停线以接受它。这取决于总线请求在另一个
+		// 时钟周期内保持稳定。
 		o_wb_stall <= 1'b0;
 	else
 		o_wb_stall <= (ack_delay > 1);
@@ -386,7 +363,7 @@ module	spixpress #(
 	end endgenerate
 	// }}}
 
-	// Make Verilator happy
+	// 让 Verilator 满意
 	// {{{
 	// verilator lint_off UNUSED
 	wire	[22:0]	unused;
@@ -394,13 +371,9 @@ module	spixpress #(
 	// verilator lint_on  UNUSED
 	// }}}
 ////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
 //
-// Formal properties section
+// 形式验证 (Formal) 部分
 // {{{
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 `ifdef	FORMAL
 	parameter	[0:0]	F_OPT_COVER = 1'b0;
@@ -413,7 +386,7 @@ module	spixpress #(
 
 	////////
 	//
-	// Reset logic
+	// 复位逻辑
 	//
 	////////
 	always @(*)
@@ -495,7 +468,7 @@ module	spixpress #(
 	end
 
 	//
-	// SPI protocol assertions
+	// SPI 协议断言
 	//
 	always @(*)
 	if (o_spi_cs_n)
@@ -579,7 +552,7 @@ module	spixpress #(
 	always @(*)
 		f_next_addr <= f_last_addr + 1'b1;
 
-	// Writes are immediately returned
+	// 写入立即返回
 	assert property (@(posedge i_clk)
 		disable iff ((i_reset)||(!i_wb_cyc))
 		((i_wb_stb)||(i_cfg_stb))&&(!o_wb_stall)
@@ -593,7 +566,7 @@ module	spixpress #(
 		);
 
 	sequence READ_COMMAND;
-		// Send command 8'h03
+		// 发送命令 8'h03
 		(f_last_addr == $past(i_wb_addr))
 				&&(!o_spi_cs_n)&&(o_spi_sck)&&(!o_spi_mosi)
 				&&(!actual_sck)
@@ -661,7 +634,7 @@ module	spixpress #(
 		disable iff ((i_reset)||(!i_wb_cyc))
 		(i_wb_stb)&&(!o_wb_stall)&&(!i_wb_we)&&(o_spi_cs_n)
 			&&(!cfg_user_mode)
-		// Send command 8'h03
+		// 发送命令 8'h03
 		|=> READ_COMMAND
 		##1 ((f_last_addr == $past(f_last_addr)) throughout
 				SEND_ADDRESS)
@@ -670,7 +643,7 @@ module	spixpress #(
 
 	//////////////
 	//
-	// The known data/address contract
+	// 已知数据/地址约定
 	//
 	/////////////
 	(* anyconst *) wire	[31:0]	f_data;
@@ -702,7 +675,7 @@ module	spixpress #(
 
 	generate if (OPT_CFG)
 	begin
-		// Now for configuration writes
+		// 现在进行配置写入
 		assert property (@(posedge i_clk)
 			disable iff ((i_reset)||(!i_wb_cyc))
 			((i_cfg_stb)&&(!o_wb_stall)&&(i_wb_we)&&(i_wb_data[8]))
@@ -741,8 +714,8 @@ module	spixpress #(
 			##1 (o_wb_ack)&&(!o_wb_stall)&&(cfg_user_mode)
 				&&(!o_spi_sck)&&(!actual_sck)&&(!o_wb_stall));
 
-		// And then configuration reads.  First the write needs to
-		// charge the o_wb_data buffer
+		// 然后是配置读取。首先写入需要
+		// 充电 o_wb_data 缓冲区
 		assert property (@(posedge i_clk)
 			disable iff ((i_reset)||(!i_wb_cyc))
 			((i_cfg_stb)&&(!o_wb_stall)&&(i_wb_we)&&(!i_wb_data[8]))
@@ -755,8 +728,8 @@ module	spixpress #(
 				})
 				&&(cfg_user_mode)&&(!o_wb_stall));
 
-		// Then it needs to stay constant until another SPI
-		// command
+		// 然后它需要保持恒定直到另一个 SPI
+		// 命令
 		assert property (@(posedge i_clk)
 			disable iff (i_reset)
 			($past(!o_spi_sck))&&(!o_spi_sck)&&(cfg_user_mode)
@@ -767,9 +740,9 @@ module	spixpress #(
 `endif
 // }}}
 endmodule
-// Usage on an iCE40
-// 		NoCfg	NoPipe	P/NCfg	Piped
-// Cells	133	168	226	259
+// 在 iCE40 上的使用情况
+// 		无配置	无流水线	配置/无流水线	流水线
+// 单元数	133	168	226	259
 // SB_CARRY	 16	 16	 36	 36
 // SB_DFF	 10	 32	 10	 32
 // SB_DFFE	 33	 10	 55	 32

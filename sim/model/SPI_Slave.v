@@ -46,13 +46,13 @@ module SPI_Slave
   wire w_SPI_Clk;  // Inverted/non-inverted depending on settings
   wire w_SPI_MISO_Mux;
   
-  reg [2:0] r_RX_Bit_Count = 0;
-  reg [2:0] r_TX_Bit_Count = 0;
-  reg [7:0] r_Temp_RX_Byte = 0;
-  reg [7:0] r_RX_Byte = 0;
-  reg r_RX_Done = 0, r2_RX_Done = 0, r3_RX_Done = 0;
-  reg [7:0] r_TX_Byte = 0;
-  reg r_SPI_MISO_Bit = 0, r_Preload_MISO = 1;
+  reg [2:0] r_RX_Bit_Count;
+  reg [2:0] r_TX_Bit_Count;
+  reg [7:0] r_Temp_RX_Byte;
+  reg [7:0] r_RX_Byte;
+  reg r_RX_Done, r2_RX_Done, r3_RX_Done;
+  reg [7:0] r_TX_Byte;
+  reg r_SPI_MISO_Bit, r_Preload_MISO;
 
   // CPOL: Clock Polarity
   // CPOL=0 means clock idles at 0, leading edge is rising edge.

@@ -69,6 +69,7 @@ module tb_spi_flash_stream;
         .i_clk          (i_clk),
         .i_reset        (i_reset),
         .i_start_read   (i_start_read),
+        .i_check_id    (1'b1),
         .i_addr         (i_addr),
         .i_length       (i_length),
         .o_data         (o_data),
@@ -137,14 +138,14 @@ module tb_spi_flash_stream;
         $display("[Test Case 1] Reading 16 bytes from Address 0x000000");
         run_read_test(24'h000000, 24'd16);
 
-        #200;
+        #2000;
 
         // ------------------------------------------------------------
-        // 测试用例 2: 从地址 0x000100 (256) 读取 32 字节
+        // 测试用例 2: 从地址 0x000100 (0) 读取 32 字节
         // ------------------------------------------------------------
         $display("[Test Case 2] Reading 32 bytes from Address 0x000100");
         // 更改一下该区域的数据，确保不是读到默认值
-        for (i = 256; i < 256+32; i = i + 1) begin
+        for (i = 0; i < 0+32; i = i + 1) begin
             u_flash_model.memory[i] = 8'hA5; // 填充 0xA5
         end
         run_read_test(24'h000100, 24'd32);

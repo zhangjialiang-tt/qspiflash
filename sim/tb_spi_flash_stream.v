@@ -67,9 +67,9 @@ module tb_spi_flash_stream;
         .DATA_WIDTH(DATA_WIDTH)
     ) u_dut (
         .i_clk          (i_clk),
-        .i_reset        (i_reset),
+        .i_rst_n        (~i_reset),
         .i_start_read   (i_start_read),
-        .i_check_id    (1'b1),
+        .i_check_id     (1'b1),
         .i_addr         (i_addr),
         .i_length       (i_length),
         .o_data         (o_data),

@@ -1,55 +1,58 @@
-//
-// 文件名:     spi_flash_stream.v
-// 项目:       流式 SPI Flash 控制器
-// 版本:       v3.3 (Polished & Production-Ready)
-//
-// 描述:       
-//   基于 SPI Mode 0 的通用只读控制器。
-//   - 所有关键时序 bug 已修复（首位 setup、移位时机、ID 拼接）
-//   - 新增 MISO 双寄存器同步（改善高速时序裕度）
-//   - 优化了短 header（ID 命令）时的移位安全性
-//   - 当 i_length==0 时，若开启 ID 校验仍执行（符合预期），否则直接 done
-//   - 代码更简洁、注释清晰，适合直接综合投片
-//
+////////////////////////////////////////////////////////////////////////////////
+
+/// \brief      流式 SPI Flash 控制器
+/// \details    基于 SPI Mode 0 的通用只读控制器，支持 ID 校验和数据流式读取
+/// \author     AI FPGA Engineer
+/// \date       2026-01-04
+/// \version    v4.0 (Refactored per v2.2 Standard)
+///
+/// \features
+///   - 所有关键时序 bug 已修复（首位 setup、移位时机、ID 拼接）
+///   - 新增 MISO 双寄存器同步（改善高速时序裕度）
+///   - 优化了短 header（ID 命令）时的移位安全性
+///   - 当 i_length==0 时，若开启 ID 校验仍执行（符合预期），否则直接 done
+///   - 代码更简洁、注释清晰，适合直接综合投片
+///
 ////////////////////////////////////////////////////////////////////////////////
 
 `default_nettype none
 
 module spi_flash_stream #(
-    parameter ADDR_WIDTH = 24,       // 地址位宽
-    parameter DATA_WIDTH = 8,        // 数据位宽
-    parameter CMD_READ   = 8'h03,    // 读数据命令
-    parameter CMD_RDID   = 8'h9F,    // 读ID命令
-    parameter CHIP_ID    = 24'hEF4018, // W25Q128 ID
-    parameter CLK_DIV    = 1,        // 分频系数
-    parameter MIN_CSH    = 4         // CS# 拉高等待周期 (推荐 >= 2)
+    parameter ADDR_WIDTH = 'd24,           // 地址位宽
+    parameter DATA_WIDTH = 'd8,            // 数据位宽
+    parameter CMD_READ   = 8'h03,          // 读数据命令
+    parameter CMD_RDID   = 8'h9F,          // 读ID命令
+    parameter CHIP_ID    = 24'hEF4018,     // W25Q128 ID
+    parameter CLK_DIV    = 'd1,            // 分频系数
+    parameter MIN_CSH    = 'd4             // CS# 拉高等待周期 (推荐 >= 2)
 ) (
-    input  wire                     i_clk,
-    input  wire                     i_reset,
+    // 系统时钟与复位
+    input  wire [1 - 1 : 0]                i_clk,
+    input  wire [1 - 1 : 0]                i_rst_n,
     
     // 用户控制接口
-    input  wire                     i_start_read,
-    input  wire                     i_check_id,     // 1=开启ID校验
-    input  wire [ADDR_WIDTH-1:0]    i_addr,
-    input  wire [ADDR_WIDTH-1:0]    i_length,
+    input  wire [1 - 1 : 0]                i_start_read,
+    input  wire [1 - 1 : 0]                i_check_id,     // 1=开启ID校验
+    input  wire [ADDR_WIDTH - 1 : 0]       i_addr,
+    input  wire [ADDR_WIDTH - 1 : 0]       i_length,
     
     // 输出接口
-    output reg  [DATA_WIDTH-1:0]    o_data,
-    output reg                      o_valid,
-    output reg                      o_done,
-    output reg                      o_error,        // ID校验失败脉冲
+    output reg  [DATA_WIDTH - 1 : 0]       o_data,
+    output reg  [1 - 1 : 0]                o_valid,
+    output reg  [1 - 1 : 0]                o_done,
+    output reg  [1 - 1 : 0]                o_error,        // ID校验失败脉冲
     
     // 物理 SPI 接口
-    output reg                      o_spi_cs_n,
-    output reg                      o_spi_sck,
-    output reg                      o_spi_mosi,
-    input  wire                     i_spi_miso
+    output reg  [1 - 1 : 0]                o_spi_cs_n,
+    output reg  [1 - 1 : 0]                o_spi_sck,
+    output reg  [1 - 1 : 0]                o_spi_mosi,
+    input  wire [1 - 1 : 0]                i_spi_miso
 );
 
     // ========================================================================
     // 参数与常量
     // ========================================================================
-    localparam MAX_HEADER_BITS = 8 + ADDR_WIDTH; 
+    localparam MAX_HEADER_BITS = 'd8 + ADDR_WIDTH;
     
     localparam [1:0] PHASE_ID   = 2'd0,  // 阶段：读取ID
                      PHASE_DATA = 2'd1;  // 阶段：读取数据
@@ -61,51 +64,54 @@ module spi_flash_stream #(
                      S_CHECK_NEXT  = 3'd4; // 事务结束检查 (决定完成还是重启)
 
     // 自动计算计数器位宽
-    localparam WAIT_CNT_W = $clog2(MIN_CSH + 1);
+    localparam WAIT_CNT_W = $clog2(MIN_CSH + 'd1);
+    localparam CLK_CNT_W  = $clog2(CLK_DIV > 'd1 ? CLK_DIV : 'd1);
 
     // ========================================================================
     // 内部信号
     // ========================================================================
-    reg [$clog2(CLK_DIV > 1 ? CLK_DIV : 1)-1:0] clk_cnt;
-    wire                      sck_toggle_en;
-    wire                      sck_rise_en;   // 采样 (Flash输出数据有效)
-    wire                      sck_fall_en;   // 发送 (Flash采样数据前夕)
+    reg [CLK_CNT_W - 1 : 0]                clk_cnt;
+    wire [1 - 1 : 0]                       sck_toggle_en;
+    wire [1 - 1 : 0]                       sck_rise_en;   // 采样 (Flash输出数据有效)
+    wire [1 - 1 : 0]                       sck_fall_en;   // 发送 (Flash采样数据前夕)
     
-    reg [1:0]                 current_phase;
-    reg [MAX_HEADER_BITS-1:0] shift_reg_out;
-    reg [5:0]                 header_len_bits;
-    reg [ADDR_WIDTH-1:0]      read_len_bytes;
+    reg [1:0]                              current_phase;
+    reg [MAX_HEADER_BITS - 1 : 0]          shift_reg_out;
+    reg [5:0]                              header_len_bits;
+    reg [ADDR_WIDTH - 1 : 0]               read_len_bytes;
     
-    reg [7:0]                 shift_reg_in;
-    reg [23:0]                id_read_buffer;
+    reg [DATA_WIDTH - 1 : 0]               shift_reg_in;
+    reg [23:0]                             id_read_buffer;
     
-    reg [2:0]                 state;
-    reg [5:0]                 cnt_bit;
-    reg [ADDR_WIDTH-1:0]      cnt_byte;
-    reg [WAIT_CNT_W-1:0]      wait_cnt;
+    reg [2:0]                              state;
+    reg [5:0]                              cnt_bit;
+    reg [ADDR_WIDTH - 1 : 0]               cnt_byte;
+    reg [WAIT_CNT_W - 1 : 0]               wait_cnt;
 
     // ========================================================================
     // 1. 时钟分频与边沿检测
     // ========================================================================
-    always @(posedge i_clk or posedge i_reset) begin
-        if (i_reset) clk_cnt <= 0;
-        else if (state != S_IDLE && state != S_CS_WAIT) begin
-            clk_cnt <= (clk_cnt == CLK_DIV - 1) ? 0 : clk_cnt + 1'b1;
+    always @(posedge i_clk or negedge i_rst_n) begin
+        if (!i_rst_n) begin
+            clk_cnt <= 'd0;
+        end else if (state != S_IDLE && state != S_CS_WAIT) begin
+            clk_cnt <= (clk_cnt == CLK_DIV - 'd1) ? 'd0 : clk_cnt + 1'b1;
         end else begin
-            clk_cnt <= 0;
+            clk_cnt <= 'd0;
         end
     end
 
-    assign sck_toggle_en = (clk_cnt == CLK_DIV - 1);
+    assign sck_toggle_en = (clk_cnt == CLK_DIV - 'd1);
     assign sck_rise_en   = sck_toggle_en && (o_spi_sck == 1'b0);
     assign sck_fall_en   = sck_toggle_en && (o_spi_sck == 1'b1);
 
     // ========================================================================
     // 2. SCK 生成
     // ========================================================================
-    always @(posedge i_clk or posedge i_reset) begin
-        if (i_reset) o_spi_sck <= 1'b0;
-        else if (sck_toggle_en) begin
+    always @(posedge i_clk or negedge i_rst_n) begin
+        if (!i_rst_n) begin
+            o_spi_sck <= 1'b0;
+        end else if (sck_toggle_en) begin
             if (state == S_SEND_HEADER || state == S_READ_DATA)
                 o_spi_sck <= ~o_spi_sck;
             else
@@ -118,27 +124,27 @@ module spi_flash_stream #(
     // ========================================================================
     // 3. 主状态机 (集成 MOSI 控制)
     // ========================================================================
-    always @(posedge i_clk or posedge i_reset) begin
-        if (i_reset) begin
+    always @(posedge i_clk or negedge i_rst_n) begin
+        if (!i_rst_n) begin
             state           <= S_IDLE;
             o_spi_cs_n      <= 1'b1;
             o_spi_mosi      <= 1'b0;
             o_valid         <= 1'b0;
             o_done          <= 1'b0;
             o_error         <= 1'b0;
-            o_data          <= 0;
+            o_data          <= 'd0;
             
-            shift_reg_out   <= 0;
-            shift_reg_in    <= 0;
-            id_read_buffer  <= 0;
+            shift_reg_out   <= 'd0;
+            shift_reg_in    <= 'd0;
+            id_read_buffer  <= 'd0;
             
-            cnt_bit         <= 0;
-            cnt_byte        <= 0;
-            header_len_bits <= 0;
-            read_len_bytes  <= 0;
+            cnt_bit         <= 'd0;
+            cnt_byte        <= 'd0;
+            header_len_bits <= 'd0;
+            read_len_bytes  <= 'd0;
             
             current_phase   <= PHASE_DATA;
-            wait_cnt        <= 0;
+            wait_cnt        <= 'd0;
         end else begin
             // 脉冲信号自动清零
             o_valid <= 1'b0;
@@ -160,8 +166,8 @@ module spi_flash_stream #(
                             current_phase   <= PHASE_ID;
                             // 将 9F 放在最高字节，低位补0 (因为左移发送)
                             shift_reg_out   <= {CMD_RDID, {(ADDR_WIDTH){1'b0}}};
-                            header_len_bits <= 8; 
-                            read_len_bytes  <= 3; 
+                            header_len_bits <= 'd8;
+                            read_len_bytes  <= 'd3;
                             state           <= S_CS_WAIT;
                         end else begin
                             // --- 配置 数据 读取 ---
@@ -171,7 +177,7 @@ module spi_flash_stream #(
                             end else begin
                                 // 03 + Addr
                                 shift_reg_out   <= {CMD_READ, i_addr};
-                                header_len_bits <= 8 + ADDR_WIDTH;
+                                header_len_bits <= 'd8 + ADDR_WIDTH;
                                 read_len_bytes  <= i_length;
                                 state           <= S_CS_WAIT;
                             end
@@ -262,7 +268,7 @@ module spi_flash_stream #(
                 // S_CHECK_NEXT: 事务决策
                 // ------------------------------------------------------------
                 S_CHECK_NEXT: begin
-                    if (clk_cnt == CLK_DIV - 1) begin
+                    if (clk_cnt == CLK_DIV - 'd1) begin
                         o_spi_cs_n <= 1'b1; // 拉高 CS
                         wait_cnt   <= 0;
 

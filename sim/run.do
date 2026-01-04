@@ -31,13 +31,12 @@ vsim -t ns -voptargs=+acc work.tb_spi_flash_stream
 
 # 结构体设置
 virtual type { 
-		{ 4'd0 SFS_IDLE } 
-		{ 4'd1 SFS_SEND_CMD}
-		{ 4'd2 SFS_SEND_ADDR}
-		{ 4'd3 SFS_READ_DATA}
-		{ 4'd4 SFS_POST_READ}
-	} state_type1;
-virtual function {(state_type1)/tb_spi_flash_stream/u_dut/state} fsm_state2
+		{ 3'd0 S_IDLE } 
+		{ 3'd1 S_SEND_HEADER}
+		{ 3'd2 S_READ_DATA}
+		{ 3'd3 S_FINISH}
+	} state_type2;
+virtual function {(state_type2)/tb_spi_flash_stream/u_dut/state} fsm_state2
 # Load wave configuration from wave.do
 do wave.do
 # do wave_ghe.do

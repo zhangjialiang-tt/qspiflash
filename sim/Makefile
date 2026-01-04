@@ -85,7 +85,7 @@ endif
 clean:
 	@echo "Cleaning simulation files..."
 	rm -f $(SIM_OUT) $(VCD_FILE) $(WLF_FILE)
-	rm -f *.vcd *.lxt *.fst *.wlf
+	rm -f *.vcd *.lxt *.fst *.wlf *.log virtuals.do
 	rm -rf work transcript
 	@echo "Clean complete."
 

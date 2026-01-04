@@ -12,7 +12,7 @@ RTL_DIR = ..
 MODEL_DIR = model
 TB_FILE = tb_spi_flash_stream.v
 RTL_FILE = $(RTL_DIR)/spi_flash_stream.v
-MODEL_FILES = $(MODEL_DIR)/SPI_Slave.v $(MODEL_DIR)/w25q32.v
+MODEL_FILES = $(MODEL_DIR)/w25q128jvxim/W25Q128JVxIM.v
 
 # Output files
 SIM_OUT = spi_flash_stream_sim
@@ -39,13 +39,10 @@ ifeq ($(SIM),iverilog)
 	@echo "Running simulation..."
 	vvp $(SIM_OUT)
 	@echo "Simulation complete. Waveform saved to $(VCD_FILE)"
-else ifeq ($(SIM),verilator)
-	@echo "Verilator simulation not yet configured"
-	@echo "Please use: make SIM=iverilog"
-else
-	@echo "Unknown simulator: $(SIM)"
-	@echo "Supported simulators: iverilog, verilator"
 endif
+
+# Rule to generate the VCD file by running simulation
+$(VCD_FILE): sim
 
 # View waveform with GTKWave
 wave: $(VCD_FILE)

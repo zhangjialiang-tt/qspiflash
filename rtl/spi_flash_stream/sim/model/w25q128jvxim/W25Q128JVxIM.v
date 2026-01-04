@@ -39,10 +39,10 @@ parameter JEDEC_ID_LO = 8'h18;
 parameter UNIQUE_ID = 64'h0102030405060708;
 parameter ADDRESS_MASK = (NUM_PAGES * PAGESIZE) - 1;		// Note that NUM_PAGES must be a power of 2 for this simulation to work properly.
 
-`define MEM_FILENAME "../lib/w25q128jvxim/MEM.TXT"		                      // Memory contents file(s)
-`define SECSI_FILENAME "../lib/w25q128jvxim/SECSI.TXT"
-`define SFDP_FILENAME "../lib/w25q128jvxim/SFDP.TXT"
-`define SREG_FILENAME "../lib/w25q128jvxim/SREG.TXT"
+`define MEM_FILENAME "./model/w25q128jvxim/MEM.TXT"		                      // Memory contents file(s)
+`define SECSI_FILENAME "./model/w25q128jvxim/SECSI.TXT"
+`define SFDP_FILENAME "./model/w25q128jvxim/SFDP.TXT"
+`define SREG_FILENAME "./model/w25q128jvxim/SREG.TXT"
 
 
 // The following registers define the main memory spaces of the device.

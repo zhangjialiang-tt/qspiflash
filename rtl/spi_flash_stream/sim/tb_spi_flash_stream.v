@@ -39,6 +39,8 @@ module tb_spi_flash_stream;
     // Flash 模型专用信号
     reg                     flash_clk;
     reg                     flash_rst_n;
+    wire                    spi_wp_n   = 1'b1;
+    wire                    spi_hold_n = 1'b1;
 
     // 验证逻辑变量
     integer                 err_count = 0;
@@ -69,16 +71,14 @@ module tb_spi_flash_stream;
         .i_spi_miso     (spi_miso)
     );
 
-    // 2. Flash 仿真模型 (W25Q32)
-    W25Q32 u_flash_model (
-        .clk_i          (flash_clk),   // 高速内部逻辑时钟
-        .rst_n          (flash_rst_n), // Active low reset
-        .spi_clk        (spi_sck),
-        .cs_n           (spi_cs_n),
-        .mosi           (spi_mosi),
-        .miso           (spi_miso),
-        .wp_n           (1'b1),        // 写保护无效
-        .hold_n         (1'b1)         // Hold 无效
+    // 2. Flash 仿真模型 (W25Q128JVxIM)
+    W25Q128JVxIM u_flash_model (
+        .CSn            (spi_cs_n),
+        .CLK            (spi_sck),
+        .DIO            (spi_mosi),
+        .DO             (spi_miso),
+        .WPn            (spi_wp_n),    // 写保护无效
+        .HOLDn          (spi_hold_n)   // Hold 无效
     );
 
     // ========================================================================
@@ -98,7 +98,7 @@ module tb_spi_flash_stream;
         $display("------------------------------------------------");
         $display("Simulation Start");
         $display("------------------------------------------------");
-        $dumpfile("spi_flash_wave.vcd");
+        $dumpfile("spi_flash_stream.vcd");
         $dumpvars(0, tb_spi_flash_stream);
 
         // 信号初始化

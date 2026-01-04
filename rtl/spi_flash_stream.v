@@ -1,301 +1,229 @@
 ////////////////////////////////////////////////////////////////////////////////
 //
-// 文件名: 	spi_flash_stream.v
-// {{{
-// 项目:	流式 SPI Flash 控制器
+// 文件名:     spi_flash_stream.v
+// 项目:       流式 SPI Flash 控制器
+// 版本:       v2.0 (Fixed & Optimized)
 //
-// 目的:	该模块旨在作为一个低逻辑资源消耗的 Flash 控制器，
-//       用于从 SPI Flash 中读取数据并以流式方式输出。
-//       它使用来自 Flash 的 8'h03 读取命令，因此不能用于
-//       时钟频率高于 50MHz 的场合。
+// 描述:       
+//   基于 SPI Mode 0 (CPOL=0, CPHA=0) 的只读控制器。
+//   - SCK 空闲为低电平
+//   - 数据在下降沿发送 (MOSI)，在上升沿采样 (MISO)
+//   - 修复了此前版本中存在的移位寄存器填充位导致的协议错误
 //
-// 功能:
-//  该控制器支持通过地址和长度指定的块读取操作。
-//  读取的数据以流式方式输出，无需握手信号。
-//
-// 接口信号:
-//  - i_start_read: 开始读取信号
-//  - i_addr: 要读取的起始地址 (24位)
-//  - i_length: 要读取的字节数 (24位)
-//  - o_data: 输出数据 (8位)
-//  - o_valid: 输出数据有效信号
-//  - o_done: 读取完成信号
-//  - o_spi_cs_n, o_spi_sck, o_spi_mosi: SPI控制信号
-//  - i_spi_miso: SPI输入数据
-//
-// SPI协议:
-//  该控制器使用标准SPI协议与Flash通信，使用8'h03命令进行标准读取操作。
-//  通信序列: CS拉低 -> 发送命令(0x03) -> 发送24位地址 -> 等待 -> 接收数据
-//
-// 创建者:	Modified from spixpress.v by Qwen Code
-//		基于 Gisselquist Technology, LLC 的原始设计
+// 限制:
+//   - 仅支持标准 SPI (非 Quad/Dual)
+//   - 仅支持 3 字节地址模式 (24-bit Address)
+//   - SCK 频率为 i_clk 频率的 1/2
 //
 ////////////////////////////////////////////////////////////////////////////////
-// }}}
-// 版权所有 (C) 2018-2021, Gisselquist Technology, LLC
-// {{{
-// 该文件是 SPI Flash 控制器项目的一部分
-//
-// SPI Flash 控制器项目是自由软件(固件):
-// 您可以重新分发和/或根据 GNU 较宽松公共许可证的条款
-// 进行修改，由自由软件基金会发布，许可证版本为 3，
-// 或(根据您的选择)任何更高版本。
-//
-// SPI Flash 控制器项目发布是希望它会有用，
-// 但没有任何保证;甚至没有适销性或特定用途适用性的
-// 隐含保证。有关详细信息，请参见 GNU 较宽松公共许可证。
-//
-// 您应该已收到 GNU 较宽松公共许可证的副本
-// 与本程序一起。(它在 $(ROOT)/doc 目录中。如果 PDF
-// 文件不存在，请在该目录中运行不带目标的 make。) 如果没有，请参见
-// <http://www.gnu.org/licenses/> 获取副本。
-// }}}
-// 许可证:	LGPL, v3, 在 www.gnu.org 上定义和找到,
-// {{{
-//		http://www.gnu.org/licenses/lgpl.html
-//
-////////////////////////////////////////////////////////////////////////////////
-//
-//
-`default_nettype	none
-// }}}
-module	spi_flash_stream (
-		// {{{
-		input	wire		i_clk, i_reset,
-		// 控制信号
-		input	wire		i_start_read,
-		input	wire	[23:0]	i_addr,
-		input	wire	[23:0]	i_length,
-		// 流式输出
-		output	reg	[7:0]	o_data,
-		output	reg		o_valid,
-		output	reg		o_done,
-		// SPI 接口
-		output	reg		o_spi_cs_n, o_spi_sck, o_spi_mosi,
-		input	wire		i_spi_miso
-		// }}}
-	);
 
-	// 信号声明
-	// {{{
-	reg	[32:0]	wdata_pipe;  // 包含命令、地址和数据的移位寄存器
-	reg		actual_sck;     // 实际SCK信号（延迟一个时钟）
+`default_nettype none
 
-	// 内部状态机控制
-	reg	[3:0]	state;        // 状态机状态
-	reg	[23:0]	current_addr; // 当前读取地址
-	reg	[23:0]	remaining_bytes; // 剩余字节数
-	reg	[4:0]	bit_count;    // 位计数器
-	reg	[23:0]	addr_byte_count; // 地址字节计数器
-	reg		data_ready;     // 数据准备好标志
-	reg	[7:0]	temp_data;    // 临时数据寄存器
-	// }}}
+module spi_flash_stream #(
+    parameter ADDR_WIDTH = 24,  // 地址位宽
+    parameter DATA_WIDTH = 8,   // 数据位宽
+    parameter CMD_WIDTH  = 8    // 命令位宽
+) (
+    input  wire                     i_clk,
+    input  wire                     i_reset,
+    
+    // 用户控制接口
+    input  wire                     i_start_read,
+    input  wire [ADDR_WIDTH-1:0]    i_addr,
+    input  wire [ADDR_WIDTH-1:0]    i_length,
+    
+    // 流式数据输出
+    output reg  [DATA_WIDTH-1:0]    o_data,
+    output reg                      o_valid,
+    output reg                      o_done,
+    
+    // 物理 SPI 接口
+    output reg                      o_spi_cs_n,
+    output reg                      o_spi_sck,
+    output reg                      o_spi_mosi,
+    input  wire                     i_spi_miso
+);
 
-	// 状态定义
-	localparam	IDLE_STATE = 4'd0,
-			SEND_CMD_STATE = 4'd1,
-			SEND_ADDR_STATE = 4'd2,
-			READ_DATA_STATE = 4'd3,
-			POST_READ_STATE = 4'd4;
+    // ========================================================================
+    // 参数定义
+    // ========================================================================
+    
+    // 移位寄存器位宽: 命令(8) + 地址(24) = 32位
+    // 注意：不需要额外的填充位，否则会导致发送数据错位
+    localparam SHIFT_REG_W = CMD_WIDTH + ADDR_WIDTH;
+    
+    // 状态机状态定义
+    localparam [2:0] SFS_IDLE       = 3'd0,
+                     SFS_SEND_CMD   = 3'd1,
+                     SFS_SEND_ADDR  = 3'd2,
+                     SFS_READ_DATA  = 3'd3,
+                     SFS_POST_READ  = 3'd4;
+                     
+    // 计数器位宽计算
+    localparam BIT_CNT_W  = $clog2(DATA_WIDTH);
+    localparam ADDR_CNT_W = $clog2(ADDR_WIDTH / DATA_WIDTH);
 
+    // ========================================================================
+    // 内部信号
+    // ========================================================================
+    
+    reg [SHIFT_REG_W-1:0]    wdata_pipe;      // 发送移位寄存器
+    reg                      actual_sck;      // 延迟的 SCK，用于边沿检测
+    
+    reg [2:0]                state;           // 主状态机
+    reg [ADDR_WIDTH-1:0]     remaining_bytes; // 剩余读取字节数
+    reg [BIT_CNT_W-1:0]      bit_count;       // 位计数 (0-7)
+    reg [ADDR_CNT_W-1:0]     addr_byte_count; // 地址字节计数 (0-2)
 
-	// wdata_pipe - 移位寄存器，用于发送命令和地址
-	// {{{
-	// wdata_pipe 是一个长移位寄存器，包含需要发送到SPI端口的值。
-	// 基本事务需要发送 8'h03 (读取) 命令，后跟 24 位地址。
-	initial	wdata_pipe = 0;
-	always @(posedge i_clk)
-	if (i_reset)
-		wdata_pipe <= 0;
-	else if (state == IDLE_STATE && i_start_read)
-		// 在开始读取时，设置命令和地址
-		wdata_pipe <= { 1'b0, 8'h03, i_addr[23:0] };  // 33位: 1位填充 + 8位命令 + 24位地址
-	else if (o_spi_sck && !actual_sck)  // 在SCK上升沿时移位
-		// 在时钟上升沿时，移位寄存器左移
-		wdata_pipe <= { wdata_pipe[31:0], i_spi_miso };
-	// }}}
+    // ========================================================================
+    // 边沿检测与输出逻辑
+    // ========================================================================
+    
+    // 边沿检测
+    wire sck_rising_edge  = (o_spi_sck && !actual_sck); // 0 -> 1
+    wire sck_falling_edge = (!o_spi_sck && actual_sck); // 1 -> 0
+    
+    // MOSI 输出：始终连接到移位寄存器的最高位
+    // 在 Mode 0 中，CS 拉低前数据就需要准备好，或者在第一个下降沿更新。
+    // 这里 wdata_pipe 在 IDLE 加载时即准备好了最高位。
+    always @(*) o_spi_mosi = wdata_pipe[SHIFT_REG_W-1];
 
-	// 发送到 Flash 的输出位简单地由这个 wdata_pipe 移位寄存器的最高位给出。
-	always @(*)
-		o_spi_mosi = wdata_pipe[32];
+    // ========================================================================
+    // 1. SPI 时钟生成 (SCK)
+    // ========================================================================
+    always @(posedge i_clk or posedge i_reset) begin
+        if (i_reset) begin
+            o_spi_sck  <= 1'b0;
+            actual_sck <= 1'b0;
+        end else begin
+            actual_sck <= o_spi_sck; // 打一拍用于检测边沿
 
-	// actual_sck
-	// {{{
-	// Actual_sck (SCK, 但延迟一个时钟)
-	//
-	// 这是硬件看到的 SCK 信号
-	initial	actual_sck = 1'b0;
-	always @(posedge i_clk)
-	if (i_reset)
-		actual_sck <= 1'b0;
-	else
-		// 我们的 SCK 信号比我们请求传输 SCK 的时钟延迟一个时钟。
-		// 我们在这里创建一个延迟副本，这样我们就能知道实际的
-		// SCK 在做什么。
-		actual_sck <= o_spi_sck;
-	// }}}
+            if (state == SFS_SEND_CMD || state == SFS_SEND_ADDR || state == SFS_READ_DATA) begin
+                o_spi_sck <= ~o_spi_sck; // 传输状态下翻转
+            end else begin
+                o_spi_sck <= 1'b0;       // 空闲状态保持低电平
+            end
+        end
+    end
 
-	// 状态机控制
-	// {{{
-	initial state = IDLE_STATE;
-	always @(posedge i_clk)
-	if (i_reset) begin
-		state <= IDLE_STATE;
-		current_addr <= 0;
-		remaining_bytes <= 0;
-		data_ready <= 0;
-		temp_data <= 0;
-		o_done <= 0;
-		bit_count <= 0;
-		addr_byte_count <= 0;
-	end
-	else begin
-		case (state)
-			IDLE_STATE: begin
-				o_done <= 0;
-				if (i_start_read) begin
-					current_addr <= i_addr;
-					remaining_bytes <= i_length;
-					bit_count <= 0;
-					addr_byte_count <= 0;
-					wdata_pipe <= { 1'b0, 8'h03, current_addr[23:0] };  // 设置初始命令和地址
-					state <= SEND_CMD_STATE;
-				end
-			end
+    // ========================================================================
+    // 2. 移位寄存器控制 (wdata_pipe)
+    // ========================================================================
+    always @(posedge i_clk or posedge i_reset) begin
+        if (i_reset) begin
+            wdata_pipe <= {SHIFT_REG_W{1'b0}};
+        end else begin
+            if (state == SFS_IDLE && i_start_read) begin
+                // 加载命令(0x03)和地址。
+                // 最高位是 0x03 的 MSB (0)，将直接呈现在 MOSI 上。
+                wdata_pipe <= {8'h03, i_addr}; 
+            end 
+            else if (sck_falling_edge) begin
+                // SPI Mode 0: 主机在下降沿更新数据 (Launch/Shift Out)
+                // 仅在发送阶段移位。读取阶段 MOSI 保持不变即可。
+                if (state == SFS_SEND_CMD || state == SFS_SEND_ADDR) begin
+                    wdata_pipe <= {wdata_pipe[SHIFT_REG_W-2:0], 1'b0}; // 左移
+                end
+            end 
+            else if (sck_rising_edge) begin
+                // SPI Mode 0: 主机在上升沿采样数据 (Capture/Sample In)
+                // 仅在读取阶段处理 MISO
+                if (state == SFS_READ_DATA) begin
+                    // 将 MISO 移入最低位。
+                    // 注意：这里借用了 wdata_pipe 的低 8 位作为接收缓冲
+                    wdata_pipe <= {wdata_pipe[SHIFT_REG_W-2:0], i_spi_miso};
+                end
+            end
+        end
+    end
 
-			SEND_CMD_STATE: begin
-				// 发送读取命令 (8'h03) - 8位
-				if (o_spi_sck && !actual_sck) begin  // 在SCK上升沿移位
-					wdata_pipe <= { wdata_pipe[31:0], 1'b0 };  // 移位发送命令位
-					bit_count <= bit_count + 1'b1;
-					if (bit_count == 7) begin  // 8位发送完成
-						bit_count <= 0;
-						addr_byte_count <= 0;  // 重置地址字节计数
-						state <= SEND_ADDR_STATE;
-					end
-				end
-			end
+    // ========================================================================
+    // 3. 主状态机
+    // ========================================================================
+    always @(posedge i_clk or posedge i_reset) begin
+        if (i_reset) begin
+            state           <= SFS_IDLE;
+            remaining_bytes <= 0;
+            o_done          <= 1'b0;
+            o_data          <= 0;
+            o_valid         <= 1'b0;
+            o_spi_cs_n      <= 1'b1;
+            bit_count       <= 0;
+            addr_byte_count <= 0;
+        end else begin
+            // 默认信号行为
+            o_valid <= 1'b0; 
+            o_done  <= 1'b0;
 
-			SEND_ADDR_STATE: begin
-				// 发送24位地址 - 每次发送8位
-				if (o_spi_sck && !actual_sck) begin  // 在SCK上升沿移位
-					wdata_pipe <= { wdata_pipe[31:0], 1'b0 };  // 移位发送地址位
-					bit_count <= bit_count + 1'b1;
-					if (bit_count == 7) begin  // 8位发送完成
-						bit_count <= 0;
-						addr_byte_count <= addr_byte_count + 1'b1;
-						if (addr_byte_count == 2) begin  // 3个字节(24位)发送完成 (0,1,2 = 3个字节)
-							// 地址发送完成后，立即进入读取状态
-							// SPI Flash在发送完地址后，下一个时钟周期开始输出数据
-							bit_count <= 0;
-							state <= READ_DATA_STATE;
-						end
-					end
-				end
-			end
+            case (state)
+                SFS_IDLE: begin
+                    o_spi_cs_n <= 1'b1;
+                    if (i_start_read) begin
+                        remaining_bytes <= i_length;
+                        bit_count       <= 0;
+                        addr_byte_count <= 0;
+                        o_spi_cs_n      <= 1'b0; // 启动传输，拉低 CS
+                        state           <= SFS_SEND_CMD;
+                    end
+                end
 
-			READ_DATA_STATE: begin
-				// 读取数据字节 - 8位
-				if (o_spi_sck && !actual_sck) begin  // 在SCK上升沿移位
-					wdata_pipe <= { wdata_pipe[31:0], i_spi_miso };  // 移位接收数据
-					bit_count <= bit_count + 1'b1;
-					if (bit_count == 7) begin  // 8位接收完成
-						// 数据已接收完成
-						temp_data <= { wdata_pipe[7:0] };  // 从移位寄存器获取读取的数据
-						data_ready <= 1;
-						remaining_bytes <= remaining_bytes - 1'b1;
-						current_addr <= current_addr + 1'b1;
-						bit_count <= 0;
+                SFS_SEND_CMD: begin
+                    // 计数在上升沿进行（此时数据已被采样）
+                    if (sck_rising_edge) begin
+                        bit_count <= bit_count + 1'b1;
+                        if (bit_count == 7) begin // 发送完 8 bit (0~7)
+                            bit_count <= 0;
+                            state     <= SFS_SEND_ADDR;
+                        end
+                    end
+                end
 
-						if (remaining_bytes > 1'b1) begin
-							// 还有更多字节要读取，继续读取下一个字节
-							// 为下一个字节重新设置命令和地址
-							wdata_pipe <= { 1'b0, 8'h03, current_addr + 1'b1 };
-							// 重新开始发送命令阶段
-							state <= SEND_CMD_STATE;
-						end
-						else begin
-							// 读取完成
-							state <= POST_READ_STATE;
-						end
-					end
-				end
-			end
+                SFS_SEND_ADDR: begin
+                    if (sck_rising_edge) begin
+                        bit_count <= bit_count + 1'b1;
+                        if (bit_count == 7) begin // 发送完 8 bit
+                            bit_count <= 0;
+                            addr_byte_count <= addr_byte_count + 1'b1;
+                            
+                            // 3字节地址发送完毕 (Count 0, 1, 2)
+                            if (addr_byte_count == 2) begin 
+                                state <= SFS_READ_DATA;
+                            end
+                        end
+                    end
+                end
 
-			POST_READ_STATE: begin
-				// 完成读取操作
-				o_done <= 1;
-				data_ready <= 0;
-				state <= IDLE_STATE;
-			end
+                SFS_READ_DATA: begin
+                    if (sck_rising_edge) begin
+                        bit_count <= bit_count + 1'b1;
+                        if (bit_count == 7) begin // 接收完 8 bit
+                            // 数据组装输出：
+                            // wdata_pipe[6:0] 包含前 7 位，i_spi_miso 是第 8 位
+                            o_data  <= {wdata_pipe[6:0], i_spi_miso};
+                            o_valid <= 1'b1;
+                            
+                            bit_count <= 0;
+                            remaining_bytes <= remaining_bytes - 1'b1;
 
-			default: state <= IDLE_STATE;
-		endcase
-	end
-	// }}}
+                            if (remaining_bytes <= 1) begin
+                                // 所有请求字节读取完毕
+                                state <= SFS_POST_READ;
+                            end
+                            // 否则保持状态，Flash 会自动递增地址继续输出
+                        end
+                    end
+                end
 
-	// SPI 信号控制
-	// {{{
-	// CSN / o_spi_cs_n
-	// 这是负逻辑芯片选择。
-	initial	o_spi_cs_n = 1'b1;
-	always @(posedge i_clk)
-	if (i_reset)
-		// 复位时空闲
-		o_spi_cs_n <= 1'b1;
-	else if (state == IDLE_STATE)
-		// 空闲时保持CS高电平（非激活）
-		o_spi_cs_n <= 1'b1;
-	else if (state == SEND_CMD_STATE)
-		// 开始传输时激活CS
-		o_spi_cs_n <= 1'b0;
-	else if (state == POST_READ_STATE)
-		// 传输完成后禁用CS
-		o_spi_cs_n <= 1'b1;
+                SFS_POST_READ: begin
+                    o_spi_cs_n <= 1'b1; // 结束传输
+                    o_done     <= 1'b1; // 发出完成信号
+                    state      <= SFS_IDLE;
+                end
 
-	// o_spi_sck / SCK
-	// SPI时钟信号
-	initial	o_spi_sck = 1'b0;
-	always @(posedge i_clk)
-	if (i_reset)
-		o_spi_sck <= 1'b0;
-	else if (state == SEND_CMD_STATE || state == SEND_ADDR_STATE || state == READ_DATA_STATE)
-		// 在数据传输期间生成时钟
-		o_spi_sck <= ~o_spi_sck;  // 翻转时钟
-	else
-		// 其他时间保持低电平
-		o_spi_sck <= 1'b0;
-	// }}}
-
-	// 流式输出控制
-	// {{{
-	// o_data, o_valid
-	// 当数据准备好时输出数据并置有效信号
-	initial o_data = 0;
-	initial o_valid = 0;
-	always @(posedge i_clk)
-	if (i_reset) begin
-		o_data <= 0;
-		o_valid <= 0;
-	end
-	else begin
-		// 在读取数据状态的下一个时钟周期输出数据
-		if (state == READ_DATA_STATE && bit_count == 7) begin
-			// 在一个字节读取完成时输出数据
-			o_data <= { wdata_pipe[7:0] };  // 输出从SPI接收的数据
-			o_valid <= 1'b1;
-		end
-		else begin
-			o_valid <= 1'b0;  // 仅在数据有效时置高
-		end
-	end
-	// }}}
-
-	// 让 Verilator 满意
-	// {{{
-	// verilator lint_off UNUSED
-	// 没有未使用的信号，因为我们移除了Wishbone接口
-	// verilator lint_on  UNUSED
-	// }}}
+                default: state <= SFS_IDLE;
+            endcase
+        end
+    end
 
 endmodule
+`default_nettype wire

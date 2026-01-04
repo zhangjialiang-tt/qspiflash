@@ -3,6 +3,7 @@ config wave -signalnamewidth 1
 add wave -divider "tb"
 add wave -group tb              -radix unsigned tb_spi_flash_stream/*
 add wave -group dut              -radix unsigned tb_spi_flash_stream/u_dut/*
+add wave -color pink            /tb_spi_flash_stream/u_dut/fsm_state2
 # add wave -group rect              -radix unsigned tb/rect_inst/*
 # add wave -group top             -radix unsigned tb/dut/*
 # # add wave -group vga             -radix unsigned tb/dut/i_vga_timing/*

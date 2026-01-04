@@ -19,7 +19,8 @@ svn-commit*
 tags
 cpudefs.h
 design.h
-octave-workspace
+design.h
+*.wlf
 core
 *.aux
 *.log
@@ -29,3 +30,7 @@ core
 *.smt2
 *_sim
 inbox/
+.claude/
+work/
+*.wlf
+transcript

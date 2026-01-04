@@ -1,4 +1,4 @@
-`timescale 1ns / 1ps
+`timescale 1ns / 1ns
 
 module tb_spi_flash_stream;
 
@@ -42,6 +42,15 @@ module tb_spi_flash_stream;
     wire                    spi_wp_n   = 1'b1;
     wire                    spi_hold_n = 1'b1;
 
+    // 仿真延迟信号：SCK 稍微滞后于数据和片选信号，确保采样窗口稳定
+    wire                    spi_sck_delay;
+    wire                    spi_cs_n_delay;
+    wire                    spi_mosi_delay;
+    
+    assign #5 spi_sck_delay  = spi_sck;
+    assign #1 spi_cs_n_delay = spi_cs_n;
+    assign #1 spi_mosi_delay = spi_mosi;
+
     // 验证逻辑变量
     integer                 err_count = 0;
     reg [ADDR_WIDTH-1:0]    check_addr;
@@ -73,9 +82,9 @@ module tb_spi_flash_stream;
 
     // 2. Flash 仿真模型 (W25Q128JVxIM)
     W25Q128JVxIM u_flash_model (
-        .CSn            (spi_cs_n),
-        .CLK            (spi_sck),
-        .DIO            (spi_mosi),
+        .CSn            (spi_cs_n_delay),
+        .CLK            (spi_sck_delay),
+        .DIO            (spi_mosi_delay),
         .DO             (spi_miso),
         .WPn            (spi_wp_n),    // 写保护无效
         .HOLDn          (spi_hold_n)   // Hold 无效
